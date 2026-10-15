@@ -17,6 +17,7 @@ EMAIL_RECEPTOR = os.environ.get("EMAIL_TO")
 def obtener_productos():
     productos = {}
     with sync_playwright() as p:
+        # Lanzamos un navegador Chromium limpio (sin historial ni caché)
         browser = p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
@@ -29,14 +30,18 @@ def obtener_productos():
         page = context.new_page()
         stealth_sync(page)
 
-        print("Accediendo a El Corte Inglés...")
+        # Añadimos el segundo actual a la URL para evitar cualquier caché del servidor de ECI
+        url_fresca = f"{URL}?_={int(time.time())}"
+        print(f"Accediendo a El Corte Inglés: {url_fresca}")
+
         try:
-            response = page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+            response = page.goto(url_fresca, wait_until="domcontentloaded", timeout=45000)
             if response and response.status == 403:
                 print("Bloqueo 403 detectado en esta pasada.")
                 browser.close()
                 return None
 
+            # Esperamos unos segundos a que cargue el listado dinámico
             time.sleep(6)
             
             # Buscamos enlaces de productos dentro del listado
@@ -46,7 +51,7 @@ def obtener_productos():
                 titulo = enlace.get_attribute("title") or enlace.inner_text().strip()
                 titulo = " ".join(titulo.split())
                 
-                # Filtramos para quedarnos solo con fichas de producto reales
+                # Filtramos para quedarnos solo con fichas de producto reales y limpiar parámetros extra
                 if "/electronica/A" in href and len(titulo) > 5:
                     link_limpio = href.split("?")[0]
                     if not link_limpio.startswith("http"):
@@ -91,17 +96,17 @@ def main():
     else:
         vistos = {}
 
-    # Comparamos los actuales con los que ya teníamos fichados
+    # Comparamos los productos actuales con los que ya teníamos guardados en vistos.json
     nuevos = {k: v for k, v in productos_actuales.items() if k not in vistos}
 
-    # Como ahora mismo hay 0 en la web, cualquier producto que aparezca es NUEVO y debe mandar correo siempre
+    # Si aparece cualquier Mac que no estuviera en vistos.json, enviamos correo inmediatamente
     if nuevos:
         print(f"¡Detectados {len(nuevos)} nuevos! Enviando email...")
         enviar_correo(nuevos)
     else:
         print("Sigue sin haber novedades (0 nuevos).")
 
-    # Guardamos el archivo vistos.json (aunque esté vacío "{}") para dejar constancia
+    # Guardamos el archivo vistos.json actualizado
     vistos.update(productos_actuales)
     with open(ARCHIVO_VISTOS, "w", encoding="utf-8") as f:
         json.dump(vistos, f, ensure_ascii=False, indent=2)

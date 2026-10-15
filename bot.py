@@ -17,7 +17,6 @@ EMAIL_RECEPTOR = os.environ.get("EMAIL_TO")
 def obtener_productos():
     productos = {}
     with sync_playwright() as p:
-        # Lanzamos un navegador Chromium real pero invisible
         browser = p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
@@ -28,23 +27,27 @@ def obtener_productos():
             viewport={"width": 1920, "height": 1080}
         )
         page = context.new_page()
-        stealth_sync(page) # Ocultamos que es un bot
+        stealth_sync(page)
 
         print("Accediendo a El Corte Inglés...")
         try:
-            page.goto(URL, wait_until="domcontentloaded", timeout=45000)
-            # Esperamos unos segundos a que carguen los productos dinámicos
+            response = page.goto(URL, wait_until="domcontentloaded", timeout=45000)
+            if response and response.status == 403:
+                print("Bloqueo 403 detectado en esta pasada.")
+                browser.close()
+                return None
+
             time.sleep(6)
             
-            # Extraemos todos los enlaces que apuntan a productos de electrónica
-            enlaces = page.query_selector_all("a[href*='/electronica/A']")
+            # Buscamos enlaces de productos dentro del listado
+            enlaces = page.query_selector_all("a.js-product-link, a.event, a[href*='/electronica/A']")
             for enlace in enlaces:
-                href = enlace.get_attribute("href")
+                href = enlace.get_attribute("href") or ""
                 titulo = enlace.get_attribute("title") or enlace.inner_text().strip()
-                
-                # Limpiamos saltos de línea y filtramos textos vacíos
                 titulo = " ".join(titulo.split())
-                if href and titulo and len(titulo) > 5:
+                
+                # Filtramos para quedarnos solo con fichas de producto reales
+                if "/electronica/A" in href and len(titulo) > 5:
                     link_limpio = href.split("?")[0]
                     if not link_limpio.startswith("http"):
                         link_limpio = "https://www.elcorteingles.es" + link_limpio
@@ -56,7 +59,7 @@ def obtener_productos():
 
         browser.close()
     
-    print(f"Productos encontrados en esta pasada: {len(productos)}")
+    print(f"Productos encontrados ahora mismo: {len(productos)}")
     return productos
 
 def enviar_correo(nuevos):
@@ -65,7 +68,7 @@ def enviar_correo(nuevos):
     msg["To"] = EMAIL_RECEPTOR
     msg["Subject"] = f"🍏 ¡{len(nuevos)} Nuevo(s) Mac Reacondicionado(s) en El Corte Inglés!"
 
-    cuerpo = "Se han detectado nuevos ordenadores Apple reacondicionados:\n\n"
+    cuerpo = "¡Corre! Acaban de aparecer estos ordenadores Apple reacondicionados:\n\n"
     for link, titulo in nuevos.items():
         cuerpo += f"• {titulo}\n  👉 {link}\n\n"
 
@@ -78,8 +81,8 @@ def enviar_correo(nuevos):
 
 def main():
     productos_actuales = obtener_productos()
-    if not productos_actuales:
-        print("No se pudieron extraer productos (posible bloqueo temporal o sin stock). Se reintentará luego.")
+    if productos_actuales is None:
+        print("Error de conexión en esta pasada. Se reintentará en la siguiente.")
         return
 
     if os.path.exists(ARCHIVO_VISTOS):
@@ -88,19 +91,17 @@ def main():
     else:
         vistos = {}
 
-    # Comparamos los productos de la web con los que ya teníamos guardados
+    # Comparamos los actuales con los que ya teníamos fichados
     nuevos = {k: v for k, v in productos_actuales.items() if k not in vistos}
 
-    # Si hay productos nuevos y NO es la primera vez que ejecutamos el bot, enviamos correo
-    if nuevos and vistos:
+    # Como ahora mismo hay 0 en la web, cualquier producto que aparezca es NUEVO y debe mandar correo siempre
+    if nuevos:
         print(f"¡Detectados {len(nuevos)} nuevos! Enviando email...")
         enviar_correo(nuevos)
-    elif not vistos:
-        print("Primera ejecución: guardando el catálogo actual como base sin enviar correo.")
     else:
-        print("No hay productos nuevos.")
+        print("Sigue sin haber novedades (0 nuevos).")
 
-    # Guardamos la lista actualizada
+    # Guardamos el archivo vistos.json (aunque esté vacío "{}") para dejar constancia
     vistos.update(productos_actuales)
     with open(ARCHIVO_VISTOS, "w", encoding="utf-8") as f:
         json.dump(vistos, f, ensure_ascii=False, indent=2)

@@ -15,7 +15,6 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASS")
 EMAIL_RECEPTOR = os.environ.get("EMAIL_TO")
 
 def obtener_productos():
-    # Añadimos el segundo actual a la URL para forzar una carga 100% nueva
     url_fresca = f"{URL}?_={int(time.time())}"
     print(f"Accediendo con camuflaje a: {url_fresca}")
     
@@ -27,34 +26,41 @@ def obtener_productos():
     }
 
     try:
-        # impersonate="chrome120" clona la huella de red de Google Chrome para saltar Akamai
-        response = requests.get(url_fresca, headers=headers, impersonate="chrome120", timeout=30)
-        
-        if response.status_code == 403:
-            print("Bloqueo 403 detectado. Akamai ha bloqueado la IP de GitHub.")
-            return None
-        elif response.status_code != 200:
-            print(f"Error HTTP {response.status_code} al cargar la página.")
-            return None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        productos = {}
-
-        # Extraemos las tarjetas de productos de El Corte Inglés
-        enlaces = soup.select("a.js-product-link, a.event, a[href*='/electronica/A']")
-        for enlace in enlaces:
-            href = enlace.get("href", "")
-            titulo = enlace.get("title") or enlace.get_text(strip=True)
-            titulo = " ".join(titulo.split())
+        # Usamos una Sesión para guardar las cookies por si nos mandan un reto temporal (HTTP 202)
+        with requests.Session(impersonate="safari15_5") as session:
+            response = session.get(url_fresca, headers=headers, timeout=30)
             
-            if "/electronica/A" in href and len(titulo) > 5:
-                link_limpio = href.split("?")[0]
-                if not link_limpio.startswith("http"):
-                    link_limpio = "https://www.elcorteingles.es" + link_limpio
-                productos[link_limpio] = titulo
+            # Si nos mandan a la sala de espera, esperamos y reintentamos con la cookie ya guardada
+            if response.status_code == 202:
+                print("HTTP 202: Sala de espera de ECI detectada. Esperando 6 segundos y reintentando...")
+                time.sleep(6)
+                response = session.get(url_fresca, headers=headers, timeout=30)
+            
+            if response.status_code == 403:
+                print("Bloqueo 403 detectado. Akamai ha bloqueado la IP.")
+                return None
+            elif response.status_code != 200:
+                print(f"Error HTTP {response.status_code} al cargar la página.")
+                print("Pista del error:", response.text[:150].replace('\n', ' '))
+                return None
 
-        print(f"Productos encontrados ahora mismo: {len(productos)}")
-        return productos
+            soup = BeautifulSoup(response.text, "html.parser")
+            productos = {}
+
+            enlaces = soup.select("a.js-product-link, a.event, a[href*='/electronica/A']")
+            for enlace in enlaces:
+                href = enlace.get("href", "")
+                titulo = enlace.get("title") or enlace.get_text(strip=True)
+                titulo = " ".join(titulo.split())
+                
+                if "/electronica/A" in href and len(titulo) > 5:
+                    link_limpio = href.split("?")[0]
+                    if not link_limpio.startswith("http"):
+                        link_limpio = "https://www.elcorteingles.es" + link_limpio
+                    productos[link_limpio] = titulo
+
+            print(f"Productos encontrados ahora mismo: {len(productos)}")
+            return productos
 
     except Exception as e:
         print(f"Error de conexión en esta pasada: {e}")

@@ -4,7 +4,8 @@ import smtplib
 import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from playwright.sync_api import sync_playwright
+from curl_cffi import requests
+from bs4 import BeautifulSoup
 
 URL = "https://www.elcorteingles.es/electronica/reacondicionados/ordenadores-y-accesorios/ordenadores/brand::Apple/"
 ARCHIVO_VISTOS = "vistos.json"
@@ -14,59 +15,50 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASS")
 EMAIL_RECEPTOR = os.environ.get("EMAIL_TO")
 
 def obtener_productos():
-    productos = {}
-    with sync_playwright() as p:
-        # Lanzamos un navegador Chromium limpio
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            locale="es-ES",
-            viewport={"width": 1920, "height": 1080}
-        )
-        page = context.new_page()
+    # Añadimos el segundo actual a la URL para forzar una carga 100% nueva
+    url_fresca = f"{URL}?_={int(time.time())}"
+    print(f"Accediendo con camuflaje a: {url_fresca}")
+    
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9",
+        "Referer": "https://www.elcorteingles.es/",
+        "Upgrade-Insecure-Requests": "1"
+    }
 
-        # ESTA LÍNEA SUSTITUYE A PLAYWRIGHT-STEALTH: Oculta a la web que somos un bot
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-        # Añadimos el segundo actual a la URL para evitar cualquier caché del servidor de ECI
-        url_fresca = f"{URL}?_={int(time.time())}"
-        print(f"Accediendo a El Corte Inglés: {url_fresca}")
-
-        try:
-            response = page.goto(url_fresca, wait_until="domcontentloaded", timeout=45000)
-            if response and response.status == 403:
-                print("Bloqueo 403 detectado en esta pasada.")
-                browser.close()
-                return None
-
-            # Esperamos unos segundos a que cargue el listado dinámico
-            time.sleep(6)
-            
-            # Buscamos enlaces de productos dentro del listado
-            enlaces = page.query_selector_all("a.js-product-link, a.event, a[href*='/electronica/A']")
-            for enlace in enlaces:
-                href = enlace.get_attribute("href") or ""
-                titulo = enlace.get_attribute("title") or enlace.inner_text().strip()
-                titulo = " ".join(titulo.split())
-                
-                # Filtramos para quedarnos solo con fichas de producto reales
-                if "/electronica/A" in href and len(titulo) > 5:
-                    link_limpio = href.split("?")[0]
-                    if not link_limpio.startswith("http"):
-                        link_limpio = "https://www.elcorteingles.es" + link_limpio
-                    productos[link_limpio] = titulo
-        except Exception as e:
-            print(f"Error al cargar la página: {e}")
-            browser.close()
+    try:
+        # impersonate="chrome120" clona la huella de red de Google Chrome para saltar Akamai
+        response = requests.get(url_fresca, headers=headers, impersonate="chrome120", timeout=30)
+        
+        if response.status_code == 403:
+            print("Bloqueo 403 detectado. Akamai ha bloqueado la IP de GitHub.")
+            return None
+        elif response.status_code != 200:
+            print(f"Error HTTP {response.status_code} al cargar la página.")
             return None
 
-        browser.close()
-    
-    print(f"Productos encontrados ahora mismo: {len(productos)}")
-    return productos
+        soup = BeautifulSoup(response.text, "html.parser")
+        productos = {}
+
+        # Extraemos las tarjetas de productos de El Corte Inglés
+        enlaces = soup.select("a.js-product-link, a.event, a[href*='/electronica/A']")
+        for enlace in enlaces:
+            href = enlace.get("href", "")
+            titulo = enlace.get("title") or enlace.get_text(strip=True)
+            titulo = " ".join(titulo.split())
+            
+            if "/electronica/A" in href and len(titulo) > 5:
+                link_limpio = href.split("?")[0]
+                if not link_limpio.startswith("http"):
+                    link_limpio = "https://www.elcorteingles.es" + link_limpio
+                productos[link_limpio] = titulo
+
+        print(f"Productos encontrados ahora mismo: {len(productos)}")
+        return productos
+
+    except Exception as e:
+        print(f"Error de conexión en esta pasada: {e}")
+        return None
 
 def enviar_correo(nuevos):
     msg = MIMEMultipart()
@@ -88,7 +80,6 @@ def enviar_correo(nuevos):
 def main():
     productos_actuales = obtener_productos()
     if productos_actuales is None:
-        print("Error de conexión en esta pasada. Se reintentará en la siguiente.")
         return
 
     if os.path.exists(ARCHIVO_VISTOS):

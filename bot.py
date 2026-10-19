@@ -26,24 +26,16 @@ def obtener_productos():
     }
 
     try:
-        # Usamos una Sesión para guardar las cookies por si nos mandan un reto temporal (HTTP 202)
-        with requests.Session(impersonate="safari15_5") as session:
+        with requests.Session(impersonate="chrome120") as session:
             response = session.get(url_fresca, headers=headers, timeout=30)
             
-            # Si nos mandan a la sala de espera, esperamos y reintentamos con la cookie ya guardada
-            if response.status_code == 202:
-                print("HTTP 202: Sala de espera de ECI detectada. Esperando 6 segundos y reintentando...")
-                time.sleep(6)
-                response = session.get(url_fresca, headers=headers, timeout=30)
-            
-            if response.status_code == 403:
-                print("Bloqueo 403 detectado. Akamai ha bloqueado la IP.")
-                return None
-            elif response.status_code != 200:
+            # Aceptamos tanto 200 como 202. Solo paramos si es un error grave como 403.
+            if response.status_code not in [200, 202]:
                 print(f"Error HTTP {response.status_code} al cargar la página.")
-                print("Pista del error:", response.text[:150].replace('\n', ' '))
                 return None
 
+            print(f"Página cargada con código {response.status_code}. Buscando Macs...")
+            
             soup = BeautifulSoup(response.text, "html.parser")
             productos = {}
 

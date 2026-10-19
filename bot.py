@@ -5,7 +5,6 @@ import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from playwright.sync_api import sync_playwright
-from playwright_stealth import stealth_sync
 
 URL = "https://www.elcorteingles.es/electronica/reacondicionados/ordenadores-y-accesorios/ordenadores/brand::Apple/"
 ARCHIVO_VISTOS = "vistos.json"
@@ -17,7 +16,7 @@ EMAIL_RECEPTOR = os.environ.get("EMAIL_TO")
 def obtener_productos():
     productos = {}
     with sync_playwright() as p:
-        # Lanzamos un navegador Chromium limpio (sin historial ni caché)
+        # Lanzamos un navegador Chromium limpio
         browser = p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
@@ -28,7 +27,9 @@ def obtener_productos():
             viewport={"width": 1920, "height": 1080}
         )
         page = context.new_page()
-        stealth_sync(page)
+
+        # ESTA LÍNEA SUSTITUYE A PLAYWRIGHT-STEALTH: Oculta a la web que somos un bot
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         # Añadimos el segundo actual a la URL para evitar cualquier caché del servidor de ECI
         url_fresca = f"{URL}?_={int(time.time())}"
@@ -51,7 +52,7 @@ def obtener_productos():
                 titulo = enlace.get_attribute("title") or enlace.inner_text().strip()
                 titulo = " ".join(titulo.split())
                 
-                # Filtramos para quedarnos solo con fichas de producto reales y limpiar parámetros extra
+                # Filtramos para quedarnos solo con fichas de producto reales
                 if "/electronica/A" in href and len(titulo) > 5:
                     link_limpio = href.split("?")[0]
                     if not link_limpio.startswith("http"):
@@ -96,17 +97,14 @@ def main():
     else:
         vistos = {}
 
-    # Comparamos los productos actuales con los que ya teníamos guardados en vistos.json
     nuevos = {k: v for k, v in productos_actuales.items() if k not in vistos}
 
-    # Si aparece cualquier Mac que no estuviera en vistos.json, enviamos correo inmediatamente
     if nuevos:
         print(f"¡Detectados {len(nuevos)} nuevos! Enviando email...")
         enviar_correo(nuevos)
     else:
         print("Sigue sin haber novedades (0 nuevos).")
 
-    # Guardamos el archivo vistos.json actualizado
     vistos.update(productos_actuales)
     with open(ARCHIVO_VISTOS, "w", encoding="utf-8") as f:
         json.dump(vistos, f, ensure_ascii=False, indent=2)

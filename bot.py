@@ -7,7 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 
-URL = "https://www.elcorteingles.es/electronica/reacondicionados/ordenadores-y-accesorios/ordenadores/brand::Apple/"
+URL = "https://www.elcorteingles.es/electronica/reacondicionados/ordenadores-y-accesorios/ordenadores/"
 ARCHIVO_VISTOS = "vistos.json"
 
 EMAIL_EMISOR = os.environ.get("EMAIL_USER")
